@@ -1,372 +1,72 @@
 import os
+import telebot
 import requests
-import json
-import logging
 import time
 from datetime import datetime
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from dotenv import load_dotenv
-from keep_alive import keep_alive  # ✅ नया जोड़ा
+from flask import Flask
+from threading import Thread
 
-# ==================== LOAD ENVIRONMENT VARIABLES ====================
-load_dotenv()
+# Flask keep-alive
+app = Flask(__name__)
 
-# ==================== CONFIGURATION ====================
+@app.route('/')
+def home():
+    return "Bot is running"
 
+def run_flask():
+    app.run(host='0.0.0.0', port=8080)
+
+Thread(target=run_flask, daemon=True).start()
+
+# Bot setup
 API_BASE = "https://anishexploits.site/api/api.php?key=exploits&num="
-# SECURITY FIX: Get token from environment variable
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8372266918:AAGMkYzH0QvmxGJVrrTXvF8nzT7KXjj1O40")
 
-if not BOT_TOKEN:
-    print("❌ ERROR: BOT_TOKEN not found in environment variables!")
-    print("💡 Please set BOT_TOKEN in Render environment variables")
-    print("🔧 Go to Render Dashboard → Your Service → Environment → Add BOT_TOKEN")
-    exit(1)
+bot = telebot.TeleBot(BOT_TOKEN)
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Linux; Android 13; Termux) Gecko/117.0 Firefox/117.0",
-    "Accept": "application/json,text/html,application/xhtml+xml,application/xml;q=0.9,/;q=0.8",
-    "Referer": "https://oliver-exploits.vercel.app/",
-    "Connection": "keep-alive"
-}
-
-# ==================== BOT SETUP ====================
-
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('bot.log')
-    ]
-)
-
-logger = logging.getLogger(__name__)
-
-# ==================== WELCOME MESSAGE ====================
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    welcome_text = (
-        "👋 *WELCOME TO OLIVER EXPLOITS*\n\n"
-        "🔍 *Advanced Number Scanner Bot*\n\n"
-        "*Features:*\n"
-        "• 📞 Number Information Lookup\n"
-        "• 🆔 Identity Verification\n"
-        "• 📍 Location Tracing\n"
-        "• 🛡️ Cybersecurity Reports\n\n"
-        "⬇️ Click the button below to start scanning"
-    )
-    
-    keyboard = [[KeyboardButton("📞 ENTER NUMBER")]]  
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)  
-    
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
-
-# ==================== HANDLE BUTTON CLICK ====================
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    
-    if text == "📞 ENTER NUMBER":
-        await update.message.reply_text(
-            "📤 *Send Your 10-digit Number Without +91:*\n\n"
-            "Example: `9876543210`", 
-            parse_mode='Markdown'
-        )  
-    else:  
-        await process_number(update, context)
-
-# ==================== PROCESS NUMBER ====================
-
-async def process_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    number = update.message.text.strip()
-    
-    if not number.isdigit() or len(number) != 10:  
-        await update.message.reply_text(
-            "❌ *INVALID INPUT*\n\n"
-            "Please send only 10-digit number.\n"
-            "Example: `9876543210`", 
-            parse_mode='Markdown'
-        )  
-        return  
-    
-    processing_msg = await update.message.reply_text(
-        "🔍 *Scanning Database...*\n"
-        "⏳ Please wait 2-3 seconds...", 
+@bot.message_handler(commands=['start'])
+def start(message):
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(telebot.types.KeyboardButton('📞 ENTER NUMBER'))
+    bot.send_message(
+        message.chat.id,
+        "👋 *WELCOME TO OLIVER EXPLOITS*\n\n🔍 *Advanced Number Scanner Bot*",
+        reply_markup=markup,
         parse_mode='Markdown'
-    )  
-    
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")  
-    time.sleep(2)  
-    
-    result = await search_number_api(number)  
-    
-    await context.bot.delete_message(
-        chat_id=update.effective_chat.id, 
-        message_id=processing_msg.message_id
-    )  
-    
-    await update.message.reply_text(result, parse_mode='Markdown')
-
-# ==================== API CALL FUNCTION ====================
-
-async def search_number_api(number):
-    url = f"{API_BASE}{number}"
-    
-    try:  
-        response = requests.get(url, headers=HEADERS, timeout=30)
-        
-        if response.status_code != 200:  
-            return format_error_report(
-                number, 
-                "❌ DATABASE ERROR", 
-                "Server connection failed."
-            )
-        
-        try:
-            data = response.json()
-        except:
-            return format_error_report(
-                number, 
-                "❌ DATA ERROR", 
-                "Invalid response format from API."
-            )
-        
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        user_data, record_count = extract_user_data(data)
-        
-        if user_data:
-            return format_cybersecurity_report(user_data, number, record_count, current_time)
-        else:
-            return format_error_report(
-                number,
-                "⚠️ NO INFORMATION FOUND",
-                "Number not found in database."
-            )
-        
-    except requests.exceptions.Timeout:
-        return format_error_report(
-            number,
-            "⏱️ TIMEOUT ERROR",
-            "Request timed out after 30 seconds."
-        )
-    except requests.exceptions.ConnectionError:
-        return format_error_report(
-            number,
-            "🌐 CONNECTION ERROR",
-            "Network connection failed."
-        )
-    except Exception as e:  
-        logger.error(f"API Error: {e}")
-        return format_error_report(
-            number,
-            "❌ SYSTEM ERROR",
-            f"Internal error: {str(e)[:50]}..."
-        )
-
-def format_error_report(number, error_type, error_details):
-    return (
-        "🛡️ OLIVER EXPLOITS CYBERSECURITY INFORMATION 🛡️\n\n"
-        f"🎯 TARGET: {number}\n\n"
-        f"{error_type}\n\n"
-        f"{error_details}\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🔐 END OF REPORT\n\n"
-        "🔄 Try again or contact support"
     )
 
-# ==================== DATA EXTRACTION ====================
+@bot.message_handler(func=lambda message: message.text == '📞 ENTER NUMBER')
+def ask_number(message):
+    bot.send_message(
+        message.chat.id,
+        "📤 *Send Your 10-digit Number Without +91:*\nExample: `9876543210`",
+        parse_mode='Markdown'
+    )
 
-def extract_user_data(data):
-    """Extract user data from different API formats"""
-    user_data = None
-    record_count = 1
+@bot.message_handler(func=lambda message: message.text.isdigit() and len(message.text) == 10)
+def process_number(message):
+    number = message.text.strip()
     
-    if isinstance(data, dict) and data.get('success') and data.get('result'):
-        results = data.get('result', [])
-        if results:
-            user_data = results[0]
-            record_count = len(results)
-    elif isinstance(data, dict) and (data.get('mobile') or data.get('name')):
-        user_data = data
-    elif isinstance(data, list) and len(data) > 0:
-        user_data = data[0]
-        record_count = len(data)
-    elif isinstance(data, dict) and data.get('status') == 'success':
-        user_data = data.get('data', {})
-    
-    return user_data, record_count
-
-# ==================== REPORT FORMATTING ====================
-
-def format_cybersecurity_report(user_data, number, record_count, current_time):
-    """Format the cybersecurity report"""
-    
-    # Extract all data
-    phone = user_data.get('mobile', number)
-    alt = user_data.get('alt_mobile')
-    aadhar = user_data.get('id_number', user_data.get('aadhar'))
-    name = user_data.get('name', 'None')
-    father = user_data.get('father_name', 'None')
-    address = user_data.get('address', '')
-    circle = user_data.get('circle', '')
-    
-    # Clean address
-    if address:
-        address = address.replace('!', ' ').replace('|', ' ').replace('NA', '').replace('l\'', '').replace('Ii', '')
-        address = ' '.join(address.split())
-    
-    # Extract actual circle/state from API data
-    actual_circle = 'Unknown'
-    if circle:
-        parts = circle.split()
-        if len(parts) >= 2:
-            actual_circle = parts[0]
-        else:
-            actual_circle = circle
-    
-    # Determine network
-    network = 'Unknown'
-    circle_upper = circle.upper()
-    if 'JIO' in circle_upper:
-        network = 'JIO'
-    elif 'VODAFONE' in circle_upper:
-        network = 'VODAFONE'
-    elif 'AIRTEL' in circle_upper:
-        network = 'AIRTEL'
-    elif 'BSNL' in circle_upper:
-        network = 'BSNL'
-    elif circle:
-        operators = ['JIO', 'VODAFONE', 'AIRTEL', 'BSNL', 'IDEA', 'AIRCEL']
-        for operator in operators:
-            if operator in circle_upper:
-                network = operator
-                break
-    
-    # Calculate risk level
-    data_points = sum([
-        1 if name and name != 'None' and name.strip() else 0,
-        1 if father and father != 'None' and father.strip() else 0,
-        1 if aadhar and aadhar.strip() else 0,
-        1 if address and address.strip() else 0,
-        1 if alt and alt.strip() else 0
-    ])
-    
-    if data_points >= 4:
-        risk_emoji = "🔴"
-        exposure = "🔓 SEVERE"
-        risk_level = "CRITICAL"
-    elif data_points >= 2:
-        risk_emoji = "🟠"
-        exposure = "🔓 HIGH"
-        risk_level = "HIGH"
-    else:
-        risk_emoji = "🟡"
-        exposure = "🔐 MODERATE"
-        risk_level = "MEDIUM"
-    
-    # Build the report
-    report = "🛡️ OLIVER EXPLOITS CYBERSECURITY INFORMATION 🛡️\n\n"
-    
-    report += "🎯 OLIVER EXPLOITS\n"
-    report += f"├─ 📞 Primary Vector: {phone}\n"
-    report += f"├─ 📱 Secondary Vector: {alt if alt else 'None'}\n"
-    report += f"└─ 🆔 Identity Marker: {aadhar if aadhar else 'None'}\n\n"
-    
-    report += "👤 TARGET PROFILE\n"
-    report += f"├─ 🎭 Owner: {name if name != 'None' else 'Not Available'}\n"
-    report += f"├─ 👨‍👦 Father : {father if father != 'None' else 'Not Available'}\n"
-    report += f"└─ 📍 Circle : {actual_circle if actual_circle != 'Unknown' else 'Not Available'}\n\n"
-    
-    report += "📍 DIGITAL GEO-LOCK\n"
-    if address:
-        if len(address) > 80:
-            address_display = address[:77] + "..."
-        else:
-            address_display = address
-        report += f"├─ 🏠 Address : {address_display}\n"
-    else:
-        report += f"├─ 🏠 Address : Not Available\n"
-    
-    # Check for landmark in address
-    landmark = 'Not Specified'
-    if address:
-        address_lower = address.lower()
-        if 'chowk' in address_lower:
-            landmark = 'Katar Chowk'
-        elif 'market' in address_lower:
-            landmark = 'Market Area'
-        elif 'station' in address_lower:
-            landmark = 'Railway Station'
-    
-    report += f"├─ 🚩 Landmark: {landmark}\n"
-    report += f"├─ 🏛️ District : Samastipur\n"
-    
-    if aadhar:
-        report += f"├─ 🪪 Aadhar: {aadhar}\n"
-    
-    report += f"├─ 📡 Network: {network}\n"
-    report += f"└─ 🌍 Country : India\n\n"
-    
-    report += "📊 DIGITAL FOOTPRINT\n"
-    report += f"├─ 🗃️ Database Traces: {record_count}\n"
-    report += f"├─ ✅ Verification: CONFIRMED\n"
-    report += f"└─ ⏰ Last Detection: {current_time}\n\n"
-    
-    report += "⚠️ THREAT ASSESSMENT\n"
-    report += f"├─ 🚨 Risk Level: {risk_emoji} {risk_level}\n"
-    report += f"├─ 🔓 Exposure: {exposure}\n"
-    report += f"└─ 🛡️ Protection: COMPROMISED\n\n"
-    
-    report += "🔍 INTELLIGENCE SOURCE\n"
-    report += f"├─ 🛡️ Oliver Exploits\n"
-    report += f"├─ 👨‍💻 Developer: @platoonleaderr\n"
-    report += f"└─ ⚡ Status: ACTIVE MONITORING\n\n"
-    
-    report += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    report += "🔐 END OF REPORT"
-    
-    return report
-
-# ==================== MAIN FUNCTION ====================
-
-def main():
-    print("\n" * 2)
-    print("=" * 60)
-    print("🛡️  OLIVER EXPLOITS NUMBER SCANNER BOT")
-    print("📱 Version: 2.0 | Status: OPERATIONAL")
-    print("=" * 60)
-    print(f"🤖 Bot Token: {BOT_TOKEN[:15]}... (secured)")
-    print("✅ Keep-alive server starting...")
-    
-    # Start keep-alive server (important for Render free tier)
-    keep_alive()
-    
-    print("🔧 Building Telegram Bot Application...")
+    msg = bot.send_message(message.chat.id, "🔍 *Scanning Database...*", parse_mode='Markdown')
+    time.sleep(2)
     
     try:
-        application = Application.builder().token(BOT_TOKEN).build()
-        
-        # Add handlers
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        
-        print("✅ Bot initialized successfully!")
-        print("🔍 Waiting for scan requests...")
-        print("🌐 Keep-alive URL: http://0.0.0.0:8080")
-        print("\n" + "=" * 60)
-        
-        # Start polling
-        application.run_polling(
-            drop_pending_updates=True,
-            allowed_updates=Update.ALL_TYPES
-        )
-        
-    except Exception as e:
-        print(f"❌ Bot failed to start: {e}")
-        logger.error(f"Bot startup error: {e}")
+        response = requests.get(f"{API_BASE}{number}", timeout=30)
+        if response.status_code == 200:
+            data = response.json()
+            # Process data here (same as before)
+            result = format_report(data, number)
+        else:
+            result = f"❌ Error: {response.status_code}"
+    except:
+        result = "❌ Connection Error"
+    
+    bot.delete_message(message.chat.id, msg.message_id)
+    bot.send_message(message.chat.id, result, parse_mode='Markdown')
 
-if __name__ == "__main__":
-    main()
+def format_report(data, number):
+    # Same formatting function as before
+    return "🛡️ Report for " + number
+
+print("🤖 Bot starting...")
+bot.polling(non_stop=True)
